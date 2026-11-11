@@ -9,6 +9,8 @@ package ngam
 //     age and summary (blame.lua, run in nvim). A click on its hash opens
 //     a bigger card with the whole commit message and the files changed,
 //     with their added and removed line counts.
+// Left of them, a terminal button shows how many terminals nvim has, and
+// drops down a list of them to switch to (menu.odin).
 // The change bars are remembered in the settings. Blame is for a quick
 // look, so it starts off each time.
 
@@ -29,6 +31,7 @@ Editbar_Button :: enum {
 	None,
 	Changes,
 	Blame,
+	Terms,
 }
 
 Blame_Card :: struct {
@@ -133,7 +136,7 @@ toggle :: proc(app: ^App, b: Editbar_Button) {
 }
 
 // button_rect is where button b sits: at the strip's right end, Blame
-// rightmost.
+// rightmost, then Changes, then Terms.
 @(private = "file")
 button_rect :: proc(app: ^App, b: Editbar_Button) -> mu.Rect {
 	h := editbar_h(app)
@@ -143,14 +146,33 @@ button_rect :: proc(app: ^App, b: Editbar_Button) -> mu.Rect {
 	if !app.agent.open {
 		right = agent_button_rect(app).x // the agent pane's show button is last
 	}
-	i: i32 = b == .Blame ? 1 : 2
-	return {right - i * s, (h - s) / 2 + 0, s, min(s, h)}
+	y := (h - s) / 2
+	#partial switch b {
+	case .Blame:
+		return {right - s, y, s, min(s, h)}
+	case .Changes:
+		return {right - 2 * s, y, s, min(s, h)}
+	}
+	w := terms_button_w(app)
+	return {right - 2 * s - w, y, w, min(s, h)}
+}
+
+// terms_button_w fits the terminal button's prompt sign and count.
+@(private = "file")
+terms_button_w :: proc(app: ^App) -> i32 {
+	ui := &app.ui
+	d := app.density
+	w := text_width(&ui.small, ">_") + i32(12 * d)
+	if n := len(app.explorer.bufs.terms); n > 0 {
+		w += text_width(&ui.small, fmt.tprint(n)) + i32(4 * d)
+	}
+	return max(w, i32(26 * d))
 }
 
 @(private = "file")
 button_at :: proc(app: ^App) -> Editbar_Button {
 	m := app.mouse
-	for b in ([]Editbar_Button{.Changes, .Blame}) {
+	for b in ([]Editbar_Button{.Terms, .Changes, .Blame}) {
 		r := button_rect(app, b)
 		if m.x >= r.x && m.x < r.x + r.w && m.y >= r.y && m.y < r.y + r.h {
 			return b
@@ -207,7 +229,10 @@ editbar_mouse_down :: proc(app: ^App, left: bool) -> bool {
 	if m.y >= editbar_h(app) || m.x < editor_x(app) || m.x >= agent_left(app) {
 		return false
 	}
-	if b := button_at(app); b != .None && left {
+	if b := button_at(app); b == .Terms && left {
+		r := button_rect(app, .Terms)
+		menu_open_terms(app, r.x + r.w, editbar_h(app))
+	} else if b != .None && left {
 		toggle(app, b)
 	}
 	return true
@@ -243,13 +268,15 @@ editbar_frame :: proc(app: ^App) {
 				}
 			}
 		}
-		left := button_rect(app, .Changes).x
+		left := button_rect(app, .Terms).x
 		label := ""
 		switch app.editbar.hover {
 		case .Changes:
 			label = app.settings.change_bars ? "Hide change bars" : "Show change bars"
 		case .Blame:
 			label = app.editbar.blame_on ? "Hide line blame" : "Show line blame"
+		case .Terms:
+			label = "Terminals"
 		case .None:
 		}
 		pad := i32(10 * d)
@@ -269,6 +296,7 @@ editbar_frame :: proc(app: ^App) {
 		}
 		draw_button(app, .Changes, app.settings.change_bars)
 		draw_button(app, .Blame, app.editbar.blame_on)
+		draw_button(app, .Terms, app.menu.open && app.menu.terms)
 		mu.end_window(ctx)
 	}
 	blame_frame(app)
@@ -313,6 +341,18 @@ draw_button :: proc(app: ^App, b: Editbar_Button, on: bool) {
 		mu.draw_rect(ctx, {x, y + s - t - t / 2, s, t + t / 2}, color)
 		mu.draw_rect(ctx, {x, y, t + t / 2, s}, color)
 		mu.draw_rect(ctx, {x + s - t - t / 2, y, t + t / 2, s}, color)
+	case .Terms:
+		// A prompt sign and the count, dimmed when there are none.
+		ui := &app.ui
+		n := len(app.explorer.bufs.terms)
+		color := n > 0 ? mix(bg, fg, 0.85) : faint
+		x := r.x + i32(6 * d)
+		y := r.y + (r.h - ui.small.cell_h) / 2
+		mu.draw_text(ctx, mu.Font(&ui.small), ">_", {x, y}, color)
+		if n > 0 {
+			x += text_width(&ui.small, ">_") + i32(4 * d)
+			mu.draw_text(ctx, mu.Font(&ui.small), fmt.tprint(n), {x, y}, color)
+		}
 	case .None:
 	}
 }

@@ -14,7 +14,11 @@ package ngam
 //   Close Buffer         for a row of the Explorer's Buffers area: closes
 //                        that buffer in nvim, asking first when it has
 //                        unsaved changes; windows showing it stay open
+//
+// The same window also drops down from the editor strip's terminal
+// button: nvim's terminals, and New Terminal.
 
+import "core:fmt"
 import "core:strings"
 import mu "vendor:microui"
 
@@ -24,6 +28,7 @@ Menu :: struct {
 	dir:  bool,
 	buf:  int, // the nvim buffer the row stands for, or 0
 	at:   [2]i32, // the top left, in window pixels
+	terms: bool, // the terminal list, in place of a file's items
 }
 
 @(private = "file")
@@ -61,6 +66,17 @@ menu_open :: proc(app: ^App, path: string, dir: bool, buf := 0) {
 	m.dir = dir
 	m.buf = buf
 	m.at = {app.mouse.x, app.mouse.y}
+	m.terms = false
+	m.open = true
+	app.need_draw = true
+}
+
+// menu_open_terms drops the terminal list down from under a button; right
+// is the button's right edge, which the list lines up with.
+menu_open_terms :: proc(app: ^App, right, top: i32) {
+	m := &app.menu
+	m.at = {right, top}
+	m.terms = true
 	m.open = true
 	app.need_draw = true
 }
@@ -98,6 +114,10 @@ menu_items :: proc(app: ^App) -> []Menu_Item {
 menu_frame :: proc(app: ^App) {
 	m := &app.menu
 	if !m.open {
+		return
+	}
+	if m.terms {
+		terms_frame(app)
 		return
 	}
 	ui := &app.ui
@@ -168,5 +188,66 @@ reveal :: proc(path: string, dir: bool) {
 		}
 	} else {
 		job_start(.Open_Url, {"xdg-open", dir ? path : path[:max(strings.last_index_byte(path, '/'), 1)]})
+	}
+}
+
+// Lua run in nvim: show terminal buffer nr in the current window, or a new
+// terminal when nr is 0. A running one takes the keys straight away.
+@(private = "file")
+TERM_SHOW_LUA :: `
+local nr = ...
+if nr == 0 then vim.cmd('terminal') else vim.api.nvim_set_current_buf(nr) end
+local ch = vim.bo.channel
+if ch > 0 and vim.fn.jobwait({ch}, 0)[1] == -1 then vim.cmd('startinsert') end
+`
+
+// terms_frame draws the terminal list under the strip's button.
+@(private = "file")
+terms_frame :: proc(app: ^App) {
+	m := &app.menu
+	ui := &app.ui
+	ctx := &ui.ctx
+	terms := app.explorer.bufs.terms[:]
+	pad := ctx.style.padding
+	row_h := ui.font.cell_h + pad
+	new_label := "New Terminal"
+	widest := 0
+	for t in terms {
+		widest = max(widest, len(fmt.tprint(t.nr)))
+	}
+	num_w := text_width(&ui.font, strings.repeat("0", widest, context.temp_allocator))
+	w := text_width(&ui.font, new_label)
+	for t in terms {
+		tw := num_w + text_width(&ui.font, t.title) + pad * 2
+		if !t.running {
+			tw += text_width(&ui.font, "exited") + pad * 2
+		}
+		w = max(w, tw)
+	}
+	ww, wh := window_pixels(app)
+	w = min(w + pad * 6, ww / 2)
+	n := len(terms) + 1
+	h := i32(n) * (row_h + ctx.style.spacing) + pad * 2
+	r := mu.Rect{max(m.at.x - w, 0), m.at.y, w, min(h, wh - m.at.y - 1)}
+
+	if ctx.mouse_pressed_bits != {} && !point_in(r, ctx.mouse_pos) {
+		menu_close(app)
+		return
+	}
+	if fixed_window(ctx, "!terms", r, {.NO_TITLE, .NO_RESIZE, .NO_CLOSE}, Z_OVERLAY) {
+		for t in terms {
+			key := fmt.tprintf("term%d", t.nr)
+			if list_row(ui, key, 0, t.title, detail = t.running ? "" : "exited", selected = t.current, number = fmt.tprint(t.nr), number_w = num_w) && !ui.right_click {
+				menu_close(app)
+				exec_lua(app, TERM_SHOW_LUA, {i64(t.nr)})
+			}
+			ui.right_click = false
+		}
+		if list_row(ui, "!newterm", 0, new_label) && !ui.right_click {
+			menu_close(app)
+			exec_lua(app, TERM_SHOW_LUA, {i64(0)})
+		}
+		ui.right_click = false
+		mu.end_window(ctx)
 	}
 }

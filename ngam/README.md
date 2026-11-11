@@ -15,6 +15,8 @@ on an ssh host.
   mouse support and scrollback.
 - **Side panel.** File Explorer, git status, opened buffers, and session switching.
 - **Git status in the editor.** blame and full commit info at each line.
+- **Terminal switcher.** A button above the editor counts nvim's terminals
+  and lists them to switch to, or opens a new one.
 - **Preview in a browser.** HTML, images, video, PDF and Markdown - reloaded live.
 - **Shared sessions.** A session can be open in ngam and in a terminal at
   the same time.

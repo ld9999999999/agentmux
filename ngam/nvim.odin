@@ -294,7 +294,7 @@ rpc_handle :: proc(app: ^App, msg: []mp.Value) {
 			case "blame_detail":
 				blame_detail_show(app, mp.as_map(mp.at(params, 1)))
 			case "buffers":
-				buffers_changed(app, mp.as_str(mp.at(params, 1)), mp.as_array(mp.at(params, 2)))
+				buffers_changed(app, mp.as_str(mp.at(params, 1)), mp.as_array(mp.at(params, 2)), mp.as_array(mp.at(params, 3)))
 			}
 		case "agentmux":
 			params := mp.as_array(mp.at(msg, 2))

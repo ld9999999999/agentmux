@@ -7,8 +7,9 @@ package ngam
 // at the right.
 //
 // nvim keeps the list up to date: BUFFERS_LUA, run in nvim when a session
-// starts, sends ('ngam', 'buffers', cwd, list) whenever a buffer is added,
-// deleted, renamed, entered, changed or written.
+// starts, sends ('ngam', 'buffers', cwd, list, terminals) whenever a buffer
+// is added, deleted, renamed, entered, changed or written. Terminals are
+// left out of the list; the editor strip's terminal button lists them.
 //
 // A single click in the Explorer only peeks at a file: the buffer is
 // read-only, and the next peek replaces it, so browsing does not pile up
@@ -27,8 +28,17 @@ Buffer :: struct {
 	peek:     bool, // opened by a single click: the next one replaces it
 }
 
+// A terminal buffer in nvim.
+Term_Buf :: struct {
+	nr:      int,
+	title:   string, // the shell's title, or the command it runs
+	current: bool,
+	running: bool, // false once its command has exited
+}
+
 Buffers :: struct {
 	list:   [dynamic]Buffer,
+	terms:  [dynamic]Term_Buf,
 	cwd:    string, // nvim's current folder, for showing paths under it
 	closed: bool, // the area is folded to its heading
 }
@@ -57,7 +67,7 @@ local function send()
   local chan = ngam_chan()
   if not chan then return end
   local cur = vim.api.nvim_get_current_buf()
-  local out, sig = {}, {vim.fn.getcwd()}
+  local out, terms, sig = {}, {}, {vim.fn.getcwd()}
   for _, b in ipairs(vim.api.nvim_list_bufs()) do
     local name = vim.api.nvim_buf_get_name(b)
     -- An empty unnamed buffer (like nvim's start buffer) shows only while it is current.
@@ -66,13 +76,23 @@ local function send()
       local row = {b, name, vim.bo[b].modified, b == cur, vim.b[b].ngam_peek ~= nil}
       out[#out + 1] = row
       sig[#sig + 1] = table.concat({row[1], row[2], tostring(row[3]), tostring(row[4]), tostring(row[5])}, '\t')
+    elseif vim.api.nvim_buf_is_valid(b) and vim.bo[b].buftype == 'terminal' then
+      -- term_title starts as the buffer's name, term://{cwd}//{pid}:{cmd},
+      -- until the shell sets a title; show just the command then.
+      local title = vim.b[b].term_title or name
+      if title:sub(1, 7) == 'term://' then title = title:match('//%d+:(.*)$') or title end
+      local ch = vim.bo[b].channel
+      local running = ch > 0 and vim.fn.jobwait({ch}, 0)[1] == -1
+      local row = {b, title, b == cur, running}
+      terms[#terms + 1] = row
+      sig[#sig + 1] = table.concat({'T', row[1], row[2], tostring(row[3]), tostring(row[4])}, '\t')
     end
   end
   -- Typing fires many events; send only when the list changed.
   local s = table.concat(sig, '\n')
   if s == B.last then return end
   B.last = s
-  vim.rpcnotify(chan, 'ngam', 'buffers', vim.fn.getcwd(), out)
+  vim.rpcnotify(chan, 'ngam', 'buffers', vim.fn.getcwd(), out, terms)
 end
 
 -- Gather a burst of events (:bufdo, a session load) into one message.
@@ -88,7 +108,7 @@ B.group = vim.api.nvim_create_augroup('ngam_buffers', {clear = true})
 -- catches the first change, and BufWritePost the save.
 local events = {}
 for _, e in ipairs({'BufAdd', 'BufDelete', 'BufWipeout', 'BufEnter', 'BufFilePost',
-    'BufModifiedSet', 'BufWritePost', 'DirChanged'}) do
+    'BufModifiedSet', 'BufWritePost', 'DirChanged', 'TermOpen', 'TermClose', 'TermLeave'}) do
   if vim.fn.exists('##' .. e) == 1 then events[#events + 1] = e end
 end
 if vim.fn.exists('##BufModifiedSet') == 0 then
@@ -167,12 +187,16 @@ buffers_reset :: proc(b: ^Buffers) {
 		delete(x.path)
 	}
 	clear(&b.list)
+	for t in b.terms {
+		delete(t.title)
+	}
+	clear(&b.terms)
 	delete(b.cwd)
 	b.cwd = ""
 }
 
 // buffers_changed takes nvim's new list.
-buffers_changed :: proc(app: ^App, cwd: string, list: []mp.Value) {
+buffers_changed :: proc(app: ^App, cwd: string, list, terms: []mp.Value) {
 	b := &app.explorer.bufs
 	old := ""
 	old_mod := make([]bool, len(b.list), context.temp_allocator)
@@ -194,6 +218,15 @@ buffers_changed :: proc(app: ^App, cwd: string, list: []mp.Value) {
 			modified = mp.as_bool(mp.at(e, 2)),
 			current = mp.as_bool(mp.at(e, 3)),
 			peek = mp.as_bool(mp.at(e, 4)),
+		})
+	}
+	for v in terms {
+		e := mp.as_array(v)
+		append(&b.terms, Term_Buf{
+			nr = int(mp.as_int(mp.at(e, 0))),
+			title = strings.clone(mp.as_str(mp.at(e, 1))),
+			current = mp.as_bool(mp.at(e, 2)),
+			running = mp.as_bool(mp.at(e, 3)),
 		})
 	}
 	// A save, or a buffer just changed, may change git's letters.

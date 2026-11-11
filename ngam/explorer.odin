@@ -46,6 +46,15 @@ Explorer :: struct {
 	reveal:   string, // a file to scroll into view once its row is drawn
 	error:    string,
 	watched:  string, // the folders last sent to nvim to watch, one per line
+	// A refresh empties the tree and reads the open folders again, one
+	// answer at a time. The tree is short until then, which would scroll
+	// it to the top, so its scroll is put back each frame until all the
+	// answers are in.
+	pending:  int, // scans of this gen still waiting for an answer
+	scroll:   i32, // the tree's scroll, saved each frame
+	restore:  i32, // the scroll to put back
+	restoring: bool,
+	settled:  int, // frames drawn since the last answer came in
 }
 
 // Lua run in nvim: list a folder ("" for the current folder). Returns
@@ -98,6 +107,8 @@ explorer_reset :: proc(e: ^Explorer) {
 	delete(e.watched)
 	e.watched = ""
 	e.gen += 1
+	e.pending = 0
+	e.restoring = false
 }
 
 @(private = "file")
@@ -118,6 +129,8 @@ clear_nodes :: proc(e: ^Explorer) {
 explorer_refresh :: proc(app: ^App) {
 	e := &app.explorer
 	e.gen += 1
+	e.pending = 0
+	keep_scroll(e)
 	scan(app, "", -1)
 	git_refresh(app) // the files' git letters
 }
@@ -127,9 +140,22 @@ scan :: proc(app: ^App, path: string, node: int, replace := false) {
 	e := &app.explorer
 	req := new(Scan_Req)
 	req^ = {e.gen, node, replace}
-	if !exec_lua(app, SCAN_LUA, {path}, scan_done, req) {
+	if exec_lua(app, SCAN_LUA, {path}, scan_done, req) {
+		e.pending += 1
+	} else {
 		free(req)
 	}
+}
+
+// keep_scroll holds the tree's scroll where it is while folders are read
+// again.
+@(private = "file")
+keep_scroll :: proc(e: ^Explorer) {
+	if !e.restoring && len(e.nodes) > 0 {
+		e.restoring = true
+		e.restore = e.scroll
+	}
+	e.settled = 0
 }
 
 @(private = "file")
@@ -137,7 +163,12 @@ scan_done :: proc(app: ^App, result: mp.Value, failed: bool, user: rawptr) {
 	req := (^Scan_Req)(user)
 	defer free(req)
 	e := &app.explorer
-	if failed || req.gen != e.gen {
+	if req.gen != e.gen {
+		return
+	}
+	e.pending -= 1
+	e.settled = 0
+	if failed {
 		return
 	}
 	r := mp.as_array(result)
@@ -220,6 +251,7 @@ explorer_dir_changed :: proc(app: ^App, dir: string) {
 	#reverse for &n, i in e.nodes {
 		if n.dir && n.loaded && n.path == dir && (i == 0 || e.expanded[n.path]) {
 			n.loading = true
+			keep_scroll(e)
 			scan(app, n.path, i, replace = true)
 			git_refresh(app) // a new file is untracked
 			return
@@ -254,12 +286,28 @@ explorer_draw :: proc(app: ^App) -> int {
 			// below it, and each scrolls on its own. (microui counts a
 			// negative height back from the bottom, less 1.)
 			mu.layout_row(ctx, {-1}, -buffers_height(app) - 1)
+			if e.restoring {
+				// Before begin_panel, which lays the rows out at this scroll.
+				if cnt := mu.get_container(ctx, "!tree"); cnt != nil {
+					cnt.scroll.y = e.restore
+				}
+				// Stop two frames after the last answer: the first of them
+				// still measures the short tree.
+				if e.pending <= 0 {
+					e.settled += 1
+					e.restoring = e.settled < 3
+				}
+				app.need_draw = true
+			}
 			mu.begin_panel(ctx, "!tree", {.NO_FRAME})
 			if e.error != "" {
 				mu.layout_row(ctx, {-1}, 0)
 				mu.text(ctx, e.error)
 			}
 			walk(app, 0, &clicked)
+			if cnt := mu.get_current_container(ctx); cnt != nil {
+				e.scroll = cnt.scroll.y
+			}
 			mu.end_panel(ctx)
 		}
 	}
@@ -374,6 +422,7 @@ scroll_into_view :: proc(app: ^App) {
 			// scroll within the content.
 			cnt.scroll.y += r.y + r.h / 2 - (body.y + body.h / 2)
 			app.need_draw = true
+			e.restoring = false // the file to show wins
 		}
 	}
 	delete(e.reveal)
