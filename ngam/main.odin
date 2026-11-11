@@ -74,6 +74,7 @@ App :: struct {
 	mouse:       [2]i32, // in window pixels
 	click_mods:  sdl.Keymod, // modifiers at the last mouse press
 	click_count: int, // 2 for the second press of a double click
+	wheel_acc:   [2]f32, // trackpad scrolling not yet a whole notch, x and y
 	editor_btn:  string, // the mouse button held in the editor, or ""
 	editor_cell: [3]int, // the cell it was last reported at (grid, row, col)
 	drawing:     bool, // inside pump; the event watch must not re-enter
@@ -634,7 +635,7 @@ handle_event :: proc(app: ^App, ev: ^sdl.Event) {
 		if !app.setup_open && app.link != nil && mx >= editor_x(app) {
 			app.mouse = {mx, i32(ev.wheel.mouse_y * app.density)}
 			if !ext_wheel(app, ev.wheel.y) {
-				editor_wheel(app, ev.wheel.y)
+				editor_wheel(app, ev.wheel.x, ev.wheel.y)
 			}
 			return
 		}
@@ -839,12 +840,39 @@ editor_mouse :: proc(app: ^App, button, action: string) {
 	nvim_input_mouse(app, button, action, mouse_mods(), grid, row, col)
 }
 
-// editor_wheel scrolls the editor, one wheel event per notch.
-editor_wheel :: proc(app: ^App, dy: f32) {
+// editor_wheel scrolls the editor, one nvim wheel event per notch, along
+// the way the wheel or trackpad moved most. A mouse wheel sends whole
+// notches; a trackpad sends many small fractions, which add up here until
+// they make a notch. nvim scrolls sideways only in windows with 'nowrap'.
+editor_wheel :: proc(app: ^App, dx, dy: f32) {
+	axis, d := 1, dy
+	if abs(dx) > abs(dy) {
+		axis, d = 0, dx
+	}
+	if d == 0 {
+		return
+	}
+	acc := &app.wheel_acc
+	// Turning back drops what was left over in the other direction.
+	if acc[axis] * d < 0 {
+		acc[axis] = 0
+	}
+	acc[1 - axis] = 0
+	acc[axis] += d
+	n := int(acc[axis])
+	if n == 0 {
+		return
+	}
+	acc[axis] -= f32(n)
+	action: string
+	if axis == 1 {
+		action = n > 0 ? "up" : "down"
+	} else {
+		action = n > 0 ? "right" : "left"
+	}
 	grid, row, col := mouse_cell(app)
-	n := clamp(int(abs(dy) + 0.5), 1, 10)
-	for _ in 0 ..< n {
-		nvim_input_mouse(app, "wheel", dy > 0 ? "up" : "down", mouse_mods(), grid, row, col)
+	for _ in 0 ..< min(abs(n), 10) {
+		nvim_input_mouse(app, "wheel", action, mouse_mods(), grid, row, col)
 	}
 }
 
@@ -1064,9 +1092,10 @@ redraw :: proc(app: ^App) {
 	mu.end(ctx)
 
 	rd := &app.rd
-	// When a glyph finds its atlas full, start that atlas over and draw the
-	// frame again.
-	for _ in 0 ..< 2 {
+	// When a glyph finds its atlas full, grow that atlas (or start it over)
+	// and draw the frame again. Growing from the smallest size to the
+	// largest can take a few passes.
+	for _ in 0 ..< 5 {
 		bg := app.link != nil ? rgb_color(app.grid.default_bg) : ui_color(app.ui.ctx.style.colors[.PANEL_BG])
 		_ = sdl.SetRenderDrawColorFloat(rd.r, bg.r, bg.g, bg.b, 1)
 		_ = sdl.RenderClear(rd.r)
@@ -1083,7 +1112,7 @@ redraw :: proc(app: ^App) {
 		}
 		for f in ([]^Font{&app.font, &app.ui.font, &app.ui.icons, &app.ui.small}) {
 			if f.full {
-				atlas_reset(f, rd.r)
+				atlas_full(f, rd.r)
 			}
 		}
 	}

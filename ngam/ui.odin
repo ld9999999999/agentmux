@@ -95,13 +95,14 @@ ui_load_fonts :: proc(ui: ^Ui, r: ^sdl.Renderer, density: f32) {
 		spec, _ = font_spec_from_file(DEFAULT_FONT, context.temp_allocator)
 	}
 	_ = font_load(&ui.font, spec, UI_SIZE, density)
-	ui.font.atlas_size = 1024 // the UI uses few glyphs; full resets it
+	// The UI uses few glyphs, so its atlases start smaller.
+	ui.font.atlas_start, ui.font.atlas_max = 256, 1024
 	atlas_reset(&ui.font, r)
 	_ = font_load(&ui.icons, spec, 22, density)
-	ui.icons.atlas_size = 512
+	ui.icons.atlas_start, ui.icons.atlas_max = 256, 512
 	atlas_reset(&ui.icons, r)
 	_ = font_load(&ui.small, spec, 11, density)
-	ui.small.atlas_size = 512
+	ui.small.atlas_start, ui.small.atlas_max = 256, 512
 	atlas_reset(&ui.small, r)
 
 	st := ui.ctx.style

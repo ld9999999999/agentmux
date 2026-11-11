@@ -28,7 +28,12 @@ when ODIN_OS == .Darwin {
 	FALLBACK_FONTS :: []string{"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"}
 }
 
-ATLAS_SIZE :: 2048 // pixels on a side; a Font's atlas_size can change it
+// An atlas starts at ATLAS_START pixels on a side and doubles each time it
+// fills, up to ATLAS_SIZE (or the Font's atlas_max); a full atlas at the
+// largest size starts over. Most sessions use a few hundred glyphs, which
+// fit the smallest size.
+ATLAS_START :: 512
+ATLAS_SIZE :: 2048
 
 Style :: enum u8 {
 	Regular,
@@ -67,7 +72,9 @@ Font :: struct {
 	size_px:        f32, // the size it was loaded at
 
 	atlas:          ^sdl.Texture,
-	atlas_size:     i32, // 0 means ATLAS_SIZE
+	atlas_size:     i32, // its size now; 0 until atlas_reset makes it
+	atlas_start:    i32, // 0 means ATLAS_START
+	atlas_max:      i32, // 0 means ATLAS_SIZE
 	glyphs:         map[Glyph_Key]Glyph,
 	pack_x, pack_y: i32, // the next free spot on the current shelf
 	shelf_h:        i32,
@@ -241,7 +248,7 @@ font_destroy :: proc(f: ^Font) {
 // 4x4 pixels stay solid white for drawing plain rectangles.
 atlas_reset :: proc(f: ^Font, r: ^sdl.Renderer) {
 	if f.atlas_size == 0 {
-		f.atlas_size = ATLAS_SIZE
+		f.atlas_size = f.atlas_start != 0 ? f.atlas_start : ATLAS_START
 	}
 	if f.atlas == nil {
 		f.atlas = sdl.CreateTexture(r, .RGBA32, .STATIC, f.atlas_size, f.atlas_size)
@@ -254,6 +261,19 @@ atlas_reset :: proc(f: ^Font, r: ^sdl.Renderer) {
 	_ = sdl.UpdateTexture(f.atlas, &rect, &white, 4 * 4)
 	f.pack_x, f.pack_y, f.shelf_h = 4, 0, 4
 	f.full = false
+}
+
+// atlas_full handles an atlas that ran out of room: it doubles the atlas
+// while it is under its largest size, and otherwise starts it over. Either
+// way it is empty after, and the frame must be drawn again.
+atlas_full :: proc(f: ^Font, r: ^sdl.Renderer) {
+	limit := f.atlas_max != 0 ? f.atlas_max : ATLAS_SIZE
+	if f.atlas_size < limit && f.atlas != nil {
+		sdl.DestroyTexture(f.atlas)
+		f.atlas = nil
+		f.atlas_size = min(f.atlas_size * 2, limit)
+	}
+	atlas_reset(f, r)
 }
 
 // glyph_get returns r's glyph in style, adding it to the atlas on first use.

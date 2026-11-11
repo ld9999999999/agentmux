@@ -12,7 +12,8 @@ package ngam
 //   click <x> <y> [mods...] a left click at x, y in points
 //   move <x> <y>            move the mouse to x, y in points
 //   drag <x> <y>            press at the mouse, move to x, y and release
-//   wheel <x> <y> <dy> [mods...]  a wheel turn at x, y; dy > 0 is up
+//   wheel <x> <y> <dy> [dx=N] [mods...]  a wheel turn at x, y; dy > 0 is
+//                                  up, dx > 0 is right
 //   rclick <x> <y>          a right click at x, y in points
 //   quit                    the same as closing the window
 
@@ -174,7 +175,11 @@ test_script_event :: proc(app: ^App, ev: ^sdl.Event) -> bool {
 		y, _ := strconv.parse_f32(words[2])
 		dy, _ := strconv.parse_f32(words[3])
 		mod: sdl.Keymod
+		dx: f32
 		for m in words[4:] {
+			if strings.has_prefix(m, "dx=") {
+				dx, _ = strconv.parse_f32(m[3:])
+			}
 			switch m {
 			case "ctrl":
 				mod += {.LCTRL}
@@ -190,6 +195,7 @@ test_script_event :: proc(app: ^App, ev: ^sdl.Event) -> bool {
 		fake.type = .MOUSE_WHEEL
 		fake.wheel.mouse_x, fake.wheel.mouse_y = x, y
 		fake.wheel.y = dy
+		fake.wheel.x = dx
 		handle_event(app, &fake)
 	case "resize":
 		w, _ := strconv.parse_int(words[1])
