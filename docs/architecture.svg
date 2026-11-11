@@ -1,0 +1,517 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 960 660"
+   width="960"
+   height="660"
+   font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
+   version="1.1"
+   id="svg46"
+   sodipodi:docname="architecture.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview46"
+     pagecolor="#ffffff"
+     bordercolor="#cccccc"
+     borderopacity="1"
+     inkscape:showpageshadow="0"
+     inkscape:pageopacity="1"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="1.2403831"
+     inkscape:cx="448.24859"
+     inkscape:cy="268.46543"
+     inkscape:window-width="2343"
+     inkscape:window-height="1223"
+     inkscape:window-x="0"
+     inkscape:window-y="30"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg46" />
+  <title
+     id="title1">How ngam, agentmux and nvim fit together</title>
+  <style
+     id="style1">
+    .bg { fill: #ffffff; }
+    .frame { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1.5; }
+    .box { fill: #ffffff; stroke: #8c959f; stroke-width: 1.2; }
+    .gui { fill: #ddf4ff; stroke: #54aeff; stroke-width: 1.2; }
+    .term { fill: #fff8c5; stroke: #d4a72c; stroke-width: 1.2; }
+    .core { fill: #dafbe1; stroke: #4ac26b; stroke-width: 1.2; }
+    .state { fill: #fbefff; stroke: #c297ff; stroke-width: 1.2; }
+    .t { fill: #1f2328; font-size: 14px; font-weight: 600; }
+    .s { fill: #59636e; font-size: 12px; }
+    .h { fill: #59636e; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; }
+    .l { fill: #59636e; font-size: 11.5px; font-style: italic; }
+    .a { stroke: #59636e; stroke-width: 1.6; fill: none; }
+    .d { stroke: #8c959f; stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+    .tip { fill: #59636e; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0d1117; }
+      .frame { fill: #161b22; stroke: #3d444d; }
+      .box { fill: #0d1117; stroke: #656c76; }
+      .gui { fill: #0c2d4a; stroke: #1f6feb; }
+      .term { fill: #3b2e05; stroke: #9e6a03; }
+      .core { fill: #0f3320; stroke: #2ea043; }
+      .state { fill: #2d1a4a; stroke: #8957e5; }
+      .t { fill: #e6edf3; }
+      .s, .h, .l { fill: #9198a1; }
+      .a { stroke: #9198a1; }
+      .d { stroke: #656c76; }
+      .tip { fill: #9198a1; }
+    }
+  </style>
+  <defs
+     id="defs1">
+    <marker
+       id="tip"
+       viewBox="0 0 10 10"
+       refX="9"
+       refY="5"
+       markerWidth="7"
+       markerHeight="7"
+       orient="auto-start-reverse">
+      <path
+         class="tip"
+         d="M0,0 L10,5 L0,10 z"
+         id="path1" />
+    </marker>
+  </defs>
+  <rect
+     class="bg"
+     x="0"
+     y="0"
+     width="960"
+     height="660"
+     id="rect1" />
+  <!-- Clients -->
+  <rect
+     class="frame"
+     x="20"
+     y="20"
+     width="440"
+     height="150"
+     rx="10"
+     id="rect2"
+     style="stroke:none;fill:#e5eff9;fill-opacity:1" />
+  <text
+     class="h"
+     x="203.45132"
+     y="42"
+     id="text2"
+     style="fill:#000000">NGAM - GUI</text>
+  <rect
+     class="gui"
+     x="36"
+     y="56"
+     width="406.94608"
+     height="98"
+     rx="6"
+     id="rect3"
+     style="stroke:#88b1d6;stroke-opacity:1" />
+  <text
+     class="t"
+     x="100"
+     y="92"
+     text-anchor="middle"
+     id="text3">Side panel</text>
+  <text
+     class="s"
+     x="100"
+     y="112"
+     text-anchor="middle"
+     id="text4">file explorer</text>
+  <text
+     class="s"
+     x="100"
+     y="128"
+     text-anchor="middle"
+     id="text5">git sessions</text>
+  <text
+     class="t"
+     x="236"
+     y="92"
+     text-anchor="middle"
+     id="text6">Editor</text>
+  <text
+     class="s"
+     x="236"
+     y="112"
+     text-anchor="middle"
+     id="text7">draws nvim's</text>
+  <text
+     class="s"
+     x="236"
+     y="128"
+     text-anchor="middle"
+     id="text8">windows</text>
+  <text
+     class="t"
+     x="376"
+     y="92"
+     text-anchor="middle"
+     id="text9">Agent pane</text>
+  <text
+     class="s"
+     x="376"
+     y="112"
+     text-anchor="middle"
+     id="text10">a terminal</text>
+  <text
+     class="s"
+     x="376"
+     y="128"
+     text-anchor="middle"
+     id="text11">(libghostty-vt)</text>
+  <rect
+     class="frame"
+     x="500"
+     y="20"
+     width="440"
+     height="150"
+     rx="10"
+     id="rect11"
+     style="stroke:none;fill:#e5eff9;fill-opacity:1" />
+  <text
+     class="h"
+     x="669.19324"
+     y="42"
+     id="text12"
+     style="fill:#000000">TEXT TERMINAL</text>
+  <rect
+     class="term"
+     x="516"
+     y="56"
+     width="200"
+     height="98"
+     rx="6"
+     id="rect12" />
+  <text
+     class="t"
+     x="616"
+     y="92"
+     text-anchor="middle"
+     id="text13">agentmux cli</text>
+  <text
+     class="s"
+     x="616"
+     y="112"
+     text-anchor="middle"
+     id="text14">agent onlyconsole</text>
+  <text
+     class="s"
+     x="616"
+     y="128"
+     text-anchor="middle"
+     id="text15">Ctrl-] detaches</text>
+  <rect
+     class="term"
+     x="724"
+     y="56"
+     width="200"
+     height="98"
+     rx="6"
+     id="rect15" />
+  <text
+     class="t"
+     x="824"
+     y="92"
+     text-anchor="middle"
+     id="text16">agentmux attach</text>
+  <text
+     class="s"
+     x="824"
+     y="118.55582"
+     text-anchor="middle"
+     id="text17">nvim with agent pane</text>
+  <!-- The session's machine -->
+  <rect
+     class="frame"
+     x="20"
+     y="240"
+     width="920"
+     height="400"
+     rx="10"
+     id="rect18"
+     style="stroke:none;fill:#e5eff9;fill-opacity:1" />
+  <text
+     class="h"
+     x="285.32202"
+     y="626"
+     id="text19"
+     style="fill:#000000">THE SESSION'S WORKSPACE - LOCAL OR REMOTE SSH HOST</text>
+  <rect
+     class="box"
+     x="40"
+     y="276"
+     width="380"
+     height="58"
+     rx="6"
+     id="rect19" />
+  <text
+     class="t"
+     x="56"
+     y="300"
+     id="text20">agentmux serve &lt;session&gt;</text>
+  <text
+     class="s"
+     x="56"
+     y="320"
+     id="text21">relays the editor, the agent's terminal and control</text>
+  <rect
+     class="gui"
+     x="40"
+     y="380"
+     width="193.77672"
+     height="84"
+     rx="6"
+     id="rect21"
+     style="stroke:#88b1d6;stroke-opacity:1" />
+  <text
+     class="t"
+     x="136.8576"
+     y="410"
+     text-anchor="middle"
+     id="text22">nvim --embed</text>
+  <text
+     class="s"
+     x="136.8913"
+     y="430"
+     text-anchor="middle"
+     id="text23">the GUI's editor</text>
+  <text
+     class="s"
+     x="137.01141"
+     y="446"
+     text-anchor="middle"
+     id="text24">+ agentmux plugin</text>
+  <rect
+     class="term"
+     x="747.56592"
+     y="380"
+     width="172.43405"
+     height="84"
+     rx="6"
+     id="rect24" />
+  <text
+     class="t"
+     x="833.76245"
+     y="410"
+     text-anchor="middle"
+     id="text25">nvim</text>
+  <text
+     class="s"
+     x="833.78589"
+     y="430"
+     text-anchor="middle"
+     id="text26">the terminals' editor</text>
+  <text
+     class="s"
+     x="833.90601"
+     y="446"
+     text-anchor="middle"
+     id="text27">+ agentmux plugin</text>
+  <rect
+     class="core"
+     x="300"
+     y="350"
+     width="360"
+     height="160"
+     rx="8"
+     id="rect27" />
+  <rect
+     class="box"
+     x="316"
+     y="362"
+     width="328"
+     height="48"
+     rx="6"
+     id="rect28" />
+  <text
+     class="t"
+     x="332"
+     y="383"
+     id="text28">agent CLI in a PTY</text>
+  <text
+     class="s"
+     x="332"
+     y="400"
+     id="text29">claude, codex, gemini, pi, a shell…</text>
+  <rect
+     class="box"
+     x="316"
+     y="418"
+     width="328"
+     height="48"
+     rx="6"
+     id="rect29" />
+  <text
+     class="t"
+     x="332"
+     y="439"
+     id="text30">IDE server</text>
+  <text
+     class="s"
+     x="332"
+     y="456"
+     id="text31">let's the agent see the file, selection, diagnostics</text>
+  <text
+     class="t"
+     x="316"
+     y="492"
+     id="text32">holder</text>
+  <text
+     class="s"
+     x="370"
+     y="492"
+     id="text33">one per session</text>
+  <rect
+     class="state"
+     x="40"
+     y="536"
+     width="880"
+     height="64"
+     rx="6"
+     id="rect33"
+     style="fill:#e1d7ec;fill-opacity:1;stroke:#c5b4db;stroke-opacity:1" />
+  <text
+     class="t"
+     x="56"
+     y="562"
+     id="text34">~/.agentmux/sessions/&lt;id&gt;</text>
+  <text
+     class="s"
+     x="56"
+     y="582"
+     id="text35">windows, cursors and unsaved edits of each editor, and the agent's conversation id. nvim is stateless</text>
+  <!-- ngam to serve -->
+  <path
+     class="a"
+     d="M236,170 L236,276"
+     marker-end="url(#tip)"
+     marker-start="url(#tip)"
+     id="path35" />
+  <text
+     class="l"
+     x="246.8062"
+     y="205.93797"
+     id="text36">I/O pipe: stdin/stdout,</text>
+  <text
+     class="l"
+     x="253.25583"
+     y="223.55038"
+     id="text37">or through ssh</text>
+  <!-- serve to its nvim and to the holder -->
+  <path
+     class="a"
+     d="M120,334 L120,380"
+     marker-end="url(#tip)"
+     marker-start="url(#tip)"
+     id="path37" />
+  <text
+     class="l"
+     x="128"
+     y="362"
+     id="text38">msgpack-RPC</text>
+  <path
+     class="a"
+     d="M400,334 L400,362"
+     marker-end="url(#tip)"
+     marker-start="url(#tip)"
+     id="path38" />
+  <text
+     class="l"
+     x="407.59689"
+     y="345.14728"
+     id="text39">agent terminal</text>
+  <!-- terminals -->
+  <path
+     class="a"
+     d="M824,154 L824,380"
+     marker-end="url(#tip)"
+     id="path39" />
+  <text
+     class="l"
+     x="832"
+     y="214"
+     id="text40">opens or joins</text>
+  <path
+     class="a"
+     d="M616,154 L580,362"
+     marker-end="url(#tip)"
+     marker-start="url(#tip)"
+     id="path40" />
+  <text
+     class="l"
+     x="614.06201"
+     y="214"
+     id="text41">unix socket</text>
+  <!-- editors to holder -->
+  <path
+     class="a"
+     d="M 234.34679,442 H 316"
+     marker-end="url(#tip)"
+     marker-start="url(#tip)"
+     id="path41"
+     sodipodi:nodetypes="cc" />
+  <text
+     class="l"
+     x="251.45842"
+     y="454.92636"
+     id="text42">IDE link</text>
+  <path
+     class="a"
+     d="M 746.35664,386 H 645.2093"
+     marker-end="url(#tip)"
+     marker-start="url(#tip)"
+     id="path42"
+     sodipodi:nodetypes="cc" />
+  <path
+     class="a"
+     d="M 746.35664,442 H 645.2093"
+     marker-end="url(#tip)"
+     marker-start="url(#tip)"
+     id="path43"
+     sodipodi:nodetypes="cc" />
+  <text
+     class="l"
+     x="664.79071"
+     y="378.79056"
+     id="text43">agent pane,</text>
+  <text
+     class="l"
+     x="671.64343"
+     y="437.51932"
+     id="text44">IDE link</text>
+  <!-- snapshots -->
+  <path
+     class="d"
+     d="M150,464 L150,536"
+     marker-end="url(#tip)"
+     id="path44" />
+  <path
+     class="d"
+     d="M810,464 L810,536"
+     marker-end="url(#tip)"
+     id="path45" />
+  <text
+     class="l"
+     x="158"
+     y="508"
+     id="text45">snapshot</text>
+  <text
+     class="l"
+     x="818"
+     y="508"
+     id="text46">snapshot</text>
+  <path
+     style="fill:#008066;stroke:#88b1d6;stroke-width:1;stroke-linecap:round;stroke-miterlimit:3.8;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"
+     d="M 167.27516,60.255763 V 149.74424"
+     id="path46" />
+  <path
+     style="fill:#008066;stroke:#88b1d6;stroke-width:1;stroke-linecap:round;stroke-miterlimit:3.8;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"
+     d="M 306.65758,60.255763 V 149.74424"
+     id="path47" />
+</svg>
