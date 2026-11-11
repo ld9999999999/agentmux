@@ -31,8 +31,10 @@ const usage = `usage: agentmux <command> [args]
                           attach this terminal to the session's agent
   a, attach <session>     open the session's editor and agent, or join it
                           if it is already open in another terminal
-  serve <session>         run the session for a GUI over stdin and stdout
-                          (ssh host agentmux serve <s>)
+  serve [-takeover] <session>
+                          run the session for a GUI over stdin and stdout
+                          (ssh host agentmux serve <s>); -takeover closes
+                          a GUI editor left open by a dropped connection
   s, send [-s <session>] [-enter] [text...]
                           type text (or stdin) into the agent
   g, goto [<session>] <file[:line[:col]]>

@@ -66,7 +66,7 @@ session, it defaults to that session.
 | `goto [<s>] file[:line[:col]]` | `g` | Show a place in the session's editor |
 | `restart <s>` | `r` | Stop the agent. It resumes when you next open it |
 | `delete [-force] <s>…` | `d` | Stop everything and remove the session |
-| `serve <s>` | | Run the session for a GUI, such as ngam |
+| `serve [-takeover] <s>` | | Run the session for a GUI, such as ngam. `-takeover` closes a GUI editor left open by a dropped connection |
 
 ## In nvim
 

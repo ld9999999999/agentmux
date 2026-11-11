@@ -1,4 +1,4 @@
-module github.com/ld9999999999/agentmux
+module github.com/ldang/agentmux
 
 go 1.27.3
 

@@ -3,7 +3,9 @@ package ngam
 // The link to `agentmux serve`: a subprocess with pipes on its stdin and
 // stdout, carrying the framed protocol in docs/gui-protocol.md. A reader
 // thread splits stdout into frames and queues them for the main thread,
-// which wakes up through an SDL user event.
+// which wakes up through an SDL user event. A writer thread sends the
+// main thread's frames, so a stalled ssh connection never blocks the
+// window.
 
 import "core:fmt"
 import "core:os"
@@ -37,7 +39,12 @@ Link :: struct {
 	woken:    bool, // a wake event is pending, so the reader can skip sending another
 
 	wake_event: u32, // the SDL user event type that wakes the main loop
-	closed:     bool, // stdin is closed: send nothing more
+	closed:     bool, // stdin is closing: send nothing more
+
+	writer:     ^thread.Thread,
+	out:        [dynamic]byte, // frames for the writer, guarded by mu
+	out_cond:   sync.Cond, // signals the writer: more to send, or closing
+	out_closed: bool, // guarded by mu: close stdin once out is sent
 }
 
 // link_start runs command (serve's command line, session included) with
@@ -70,7 +77,45 @@ link_start :: proc(l: ^Link, command: []string, wake_event: u32) -> bool {
 	l.to_serve = in_w
 	l.from = out_r
 	l.reader = thread.create_and_start_with_data(l, link_read_loop)
+	l.writer = thread.create_and_start_with_data(l, link_write_loop)
 	return true
+}
+
+// link_write_loop runs on the writer thread. It sends what link_send
+// queued, and closes serve's stdin after link_close. A write that fails
+// (serve or ssh died) drops the rest.
+@(private = "file")
+link_write_loop :: proc(data: rawptr) {
+	l := (^Link)(data)
+	buf: [dynamic]byte
+	defer delete(buf)
+	failed := false
+	for {
+		sync.mutex_lock(&l.mu)
+		for len(l.out) == 0 && !l.out_closed {
+			sync.cond_wait(&l.out_cond, &l.mu)
+		}
+		buf, l.out = l.out, buf
+		clear(&l.out)
+		closing := l.out_closed
+		sync.mutex_unlock(&l.mu)
+		if len(buf) > 0 && !failed {
+			if _, err := os.write(l.to_serve, buf[:]); err != nil {
+				fmt.eprintln("ngam: write to serve:", err)
+				failed = true
+			}
+		}
+		clear(&buf)
+		if closing {
+			sync.mutex_lock(&l.mu)
+			done := len(l.out) == 0
+			sync.mutex_unlock(&l.mu)
+			if done {
+				break
+			}
+		}
+	}
+	os.close(l.to_serve)
 }
 
 // link_read_loop runs on the reader thread until serve's stdout closes.
@@ -133,33 +178,38 @@ link_take :: proc(l: ^Link, out: ^[dynamic]Frame) {
 	sync.mutex_unlock(&l.mu)
 }
 
-// link_send writes one frame to serve. Only the main thread sends.
+// link_send queues one frame for serve. Only the main thread sends.
 link_send :: proc(l: ^Link, type: byte, payload: []byte) {
 	if l.closed {
 		return
 	}
-	buf := make([]byte, 5 + len(payload), context.temp_allocator)
 	n := len(payload)
-	buf[0] = type
-	buf[1] = byte(n >> 24)
-	buf[2] = byte(n >> 16)
-	buf[3] = byte(n >> 8)
-	buf[4] = byte(n)
-	copy(buf[5:], payload)
-	if _, err := os.write(l.to_serve, buf); err != nil {
-		fmt.eprintln("ngam: write to serve:", err)
-		link_close(l)
-	}
+	header := [5]byte{type, byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)}
+	sync.mutex_lock(&l.mu)
+	append(&l.out, ..header[:])
+	append(&l.out, ..payload)
+	sync.mutex_unlock(&l.mu)
+	sync.cond_signal(&l.out_cond)
 }
 
-// link_close closes serve's stdin, which ends the session's editor: serve
-// has nvim save its snapshot, then exits.
+// link_close closes serve's stdin once the queued frames are sent, which
+// ends the session's editor: serve has nvim save its snapshot, then exits.
 link_close :: proc(l: ^Link) {
 	if l.closed {
 		return
 	}
 	l.closed = true
-	os.close(l.to_serve)
+	sync.mutex_lock(&l.mu)
+	l.out_closed = true
+	sync.mutex_unlock(&l.mu)
+	sync.cond_signal(&l.out_cond)
+}
+
+// link_kill ends serve (or the ssh that runs it) at once, for a link that
+// is stuck. The reader and writer threads then see their pipes close.
+link_kill :: proc(l: ^Link) {
+	link_close(l)
+	_ = os.process_kill(l.process)
 }
 
 // link_wait waits for serve to exit, killing it if it takes longer than
@@ -179,6 +229,12 @@ link_wait :: proc(l: ^Link) -> int {
 // link_destroy frees what link_start made, once serve has exited (after
 // link_close and link_wait): the reader thread has seen EOF and stops.
 link_destroy :: proc(l: ^Link) {
+	if l.writer != nil {
+		thread.join(l.writer)
+		thread.destroy(l.writer)
+		l.writer = nil
+	}
+	delete(l.out)
 	if l.reader != nil {
 		thread.join(l.reader)
 		thread.destroy(l.reader)

@@ -352,6 +352,11 @@ setup_frame :: proc(app: ^App) {
 		if .SUBMIT in mu.button(ctx, "Back (Esc)") {
 			app.setup_open = false
 		}
+	} else if app.last_session != "" {
+		// After a dropped connection: open the last session again.
+		if .SUBMIT in mu.button(ctx, "Reconnect") {
+			reconnect(app)
+		}
 	} else {
 		mu.label(ctx, "")
 	}

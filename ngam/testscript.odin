@@ -195,6 +195,8 @@ test_script_event :: proc(app: ^App, ev: ^sdl.Event) -> bool {
 		w, _ := strconv.parse_int(words[1])
 		h, _ := strconv.parse_int(words[2])
 		_ = sdl.SetWindowSize(app.window, i32(w), i32(h))
+	case "reconnect":
+		reconnect(app)
 	case "quit":
 		app.quit = true
 	}

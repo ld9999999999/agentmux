@@ -2,11 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -315,5 +318,49 @@ func TestServeRefusesAnotherGUI(t *testing.T) {
 	}
 	if strings.Join(types, ",") != "error,bye" {
 		t.Fatalf("control messages %v, want error then bye", types)
+	}
+}
+
+// takeOverGUI closes a GUI editor left by a serve whose connection died:
+// first by asking that serve to end, then by killing a stuck one.
+func TestTakeOverGUI(t *testing.T) {
+	t.Setenv("AGENTMUX_HOME", t.TempDir())
+	takeoverWait = 2 * time.Second
+	for _, stuck := range []bool{false, true} {
+		s, err := createSession("shell", t.TempDir(), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		nvim := exec.Command("sleep", "60")
+		if err := nvim.Start(); err != nil {
+			t.Fatal(err)
+		}
+		// The old serve closes its nvim on SIGTERM, unless it is stuck.
+		script := fmt.Sprintf(`trap 'kill %d; exit 0' TERM; while :; do sleep 0.05; done`, nvim.Process.Pid)
+		if stuck {
+			script = `trap '' TERM; while :; do sleep 0.05; done`
+		}
+		old := exec.Command("sh", "-c", script)
+		if err := old.Start(); err != nil {
+			t.Fatal(err)
+		}
+		go nvim.Wait()
+		go old.Wait()
+		time.Sleep(200 * time.Millisecond) // let sh set its trap
+		markEditor(s, nvim.Process.Pid, uiGUI)
+		_ = writePid(s.Path("serve-gui.pid"), old.Process.Pid)
+
+		start := time.Now()
+		takeOverGUI(s)
+		if editorPid(s, uiGUI) != 0 {
+			t.Fatalf("stuck=%v: the GUI editor is still open", stuck)
+		}
+		if took := time.Since(start); !stuck && took > time.Second {
+			t.Fatalf("a willing serve took %v to close", took)
+		}
+		time.Sleep(100 * time.Millisecond)
+		if syscall.Kill(old.Process.Pid, 0) == nil {
+			t.Fatalf("stuck=%v: the old serve is still running", stuck)
+		}
 	}
 }

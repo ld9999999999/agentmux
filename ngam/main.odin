@@ -5,7 +5,7 @@ package ngam
 // session's nvim in an SDL3 window with a side panel, and sends it the
 // keyboard and mouse. With no session on the command line it opens the
 // setup screen. See docs/gui-protocol.md in the agentmux repo for the
-// protocol for how it is built and how it works.
+// protocol, and DEVEL.md here for how it is built and how it works.
 
 import "base:runtime"
 import "core:encoding/json"
@@ -51,6 +51,7 @@ App :: struct {
 	dark:        bool, // the theme in use
 	wake_event:  u32, // serve's frames or a preview fetch are waiting
 	settings_event: u32, // the macOS menu's Settings… was chosen
+	reconnect_event: u32, // the macOS menu's Reconnect was chosen
 
 	// The open session. link is set only while a session is open.
 	grid:        Grid,
@@ -60,6 +61,10 @@ App :: struct {
 	host:        string, // the host the session is served from; "" is this machine
 	cli_session: bool, // opened from the command line: quit when it ends
 	editor_up:   bool, // the session's editor started, so its end is a quit
+	// The session Reconnect opens again: the last one opened, kept after
+	// its link ends.
+	last_host:   string,
+	last_session: string,
 	window_record: Window_Record, // this window's last saved record (windows.odin)
 	serve_cmd:   string, // -serve or $NGAM_SERVE, if given
 
@@ -201,7 +206,8 @@ main :: proc() {
 	set_app_icon(app.window)
 	_ = sdl.SetRenderVSync(app.rd.r, 1)
 	app.settings_event = sdl.RegisterEvents(1)
-	mac_menu_init(app.settings_event)
+	app.reconnect_event = sdl.RegisterEvents(1)
+	mac_menu_init(app.settings_event, app.reconnect_event)
 	app.density = sdl.GetWindowPixelDensity(app.window)
 	if !load_editor_font(app) {
 		os.exit(1)
@@ -337,7 +343,7 @@ show_toast :: proc(app: ^App, msg: string) {
 // ---- Sessions ----
 
 // serve_command is the command that serves session from host.
-serve_command :: proc(app: ^App, host, session: string) -> []string {
+serve_command :: proc(app: ^App, host, session: string, takeover := false) -> []string {
 	cmd := make([dynamic]string, context.temp_allocator)
 	switch {
 	case app.serve_cmd != "":
@@ -350,6 +356,9 @@ serve_command :: proc(app: ^App, host, session: string) -> []string {
 		append(&cmd, ..strings.fields(app.settings.agentmux, context.temp_allocator))
 		append(&cmd, "serve")
 	}
+	if takeover && app.serve_cmd == "" {
+		append(&cmd, "-takeover")
+	}
 	append(&cmd, session)
 	return cmd[:]
 }
@@ -359,19 +368,22 @@ serve_command :: proc(app: ^App, host, session: string) -> []string {
 ssh_command :: proc(app: ^App, host: string) -> []string {
 	cmd := make([dynamic]string, context.temp_allocator)
 	append(&cmd, ..askpass_ssh_command())
-	append(&cmd, "-o", "ConnectTimeout=10", host)
+	// Keepalives end ssh about 30 seconds after the network drops, so a
+	// dead connection shows up instead of hanging.
+	append(&cmd, "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3", host)
 	append(&cmd, app.settings.remote_agentmux)
 	return cmd[:]
 }
 
 // open_session ends the open session, if any, and serves session from
 // host.
-open_session :: proc(app: ^App, host, session: string) -> bool {
+open_session :: proc(app: ^App, host, session: string, takeover := false) -> bool {
 	if app.link != nil {
 		close_session(app)
 	}
+	set_last_session(app, host, session)
 	l := new(Link)
-	if !link_start(l, serve_command(app, host, session), app.wake_event) {
+	if !link_start(l, serve_command(app, host, session, takeover), app.wake_event) {
 		free(l)
 		setup_set_status(app, fmt.tprintf("Cannot start agentmux serve for %s.", session))
 		return false
@@ -415,8 +427,18 @@ close_session :: proc(app: ^App) -> int {
 
 // session_ended handles serve exiting by itself: after :qa, or a failure.
 session_ended :: proc(app: ^App) {
-	window_record_drop(app) // its session ended, so a restore skips this window
+	host := strings.clone(app.host, context.temp_allocator)
+	lost := host != "" && app.editor_up
 	code := close_session(app)
+	if lost && code != 0 {
+		// ssh failed after the editor was up: the connection dropped. The
+		// window's record stays, so a restore brings the session back.
+		setup_set_status(app, fmt.tprintf("Lost the connection to %s. Reconnect opens the session again.", host))
+		app.cli_session = false
+		setup_show(app)
+		return
+	}
+	window_record_drop(app) // its session ended, so a restore skips this window
 	// A session from the command line quits ngam when its editor closes.
 	// If the editor never started (nvim is missing, say), ngam stays on the
 	// setup screen to show why.
@@ -428,6 +450,37 @@ session_ended :: proc(app: ^App) {
 		setup_set_status(app, code == 0 ? "The session's editor closed." : "agentmux serve failed; its message is in ngam's terminal output.")
 	}
 	setup_show(app)
+}
+
+// set_last_session makes host's session the one Reconnect opens.
+set_last_session :: proc(app: ^App, host, session: string) {
+	h, s := strings.clone(host), strings.clone(session)
+	delete(app.last_host)
+	delete(app.last_session)
+	app.last_host, app.last_session = h, s
+}
+
+// reconnect ends the session's link at once, without waiting for a
+// connection that may be stuck, and opens the session again. The new
+// serve takes over the editor that the old one may have left open on the
+// host.
+reconnect :: proc(app: ^App) {
+	if app.last_session == "" {
+		show_toast(app, "There is no session to reconnect to.")
+		return
+	}
+	host := strings.clone(app.last_host, context.temp_allocator)
+	session := strings.clone(app.last_session, context.temp_allocator)
+	if app.link != nil {
+		link_kill(app.link)
+		close_session(app)
+	}
+	setup_set_status(app, "")
+	if open_session(app, host, session, takeover = true) {
+		show_toast(app, fmt.tprintf("Reconnecting to %s…", host == "" ? "this machine" : host))
+	} else {
+		setup_show(app)
+	}
 }
 
 // settings_toggle opens the setup screen at its Settings tab. If that tab
@@ -449,6 +502,10 @@ settings_toggle :: proc(app: ^App) {
 handle_event :: proc(app: ^App, ev: ^sdl.Event) {
 	if u32(ev.type) == app.wake_event {
 		return // frames or fetches are waiting; pump handles them
+	}
+	if u32(ev.type) == app.reconnect_event {
+		reconnect(app)
+		return
 	}
 	if u32(ev.type) == app.settings_event {
 		settings_toggle(app)
@@ -861,6 +918,7 @@ handle_control :: proc(app: ^App, payload: []byte) {
 	case "session":
 		// A new nvim: start a new RPC session and attach to it. nvim runs
 		// its startup only after a UI attaches.
+		set_last_session(app, app.host, c.id) // a handoff changes the session
 		rpc_reset(app)
 		grid_clear_all(&app.grid)
 		delete(app.session.id)

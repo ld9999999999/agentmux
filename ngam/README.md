@@ -97,7 +97,9 @@ second opens that session directly.
 | `-window x,y,w,h[,max]` | Place and size the window, in points; `,max` maximizes it |
 | `-serve "CMD"` | Use this command to serve the session |
 
-Closing the window leaves the agent running.
+Closing the window leaves the agent running. If an ssh connection drops or
+hangs, choose **Reconnect** in the ngam menu (or on the setup screen) to
+open the session again.
 
 ## Keyboard shortcuts
 

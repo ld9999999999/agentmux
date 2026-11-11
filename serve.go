@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -55,6 +56,15 @@ func (c *serveConn) control(m map[string]any) {
 }
 
 func serve(s *Session, r io.Reader, w io.Writer) error {
+	return serveSession(s, r, w, false)
+}
+
+// serveSession is serve. With takeover, a GUI editor already open on the
+// first session is closed first (see takeOverGUI).
+func serveSession(s *Session, r io.Reader, w io.Writer, takeover bool) error {
+	if takeover {
+		takeOverGUI(s)
+	}
 	c := &serveConn{w: w}
 	handoff := handoffPath()
 	defer os.Remove(handoff)
@@ -88,6 +98,38 @@ func serve(s *Session, r io.Reader, w io.Writer) error {
 	}
 	c.control(map[string]any{"type": "bye"})
 	return nil
+}
+
+// takeOverGUI closes the GUI editor open on s, if any. It is for a GUI
+// that reconnects after its network dropped: the serve it had may still
+// run here, holding the session, until the host notices the connection is
+// gone. That serve gets SIGTERM, which saves nvim's snapshot and closes
+// it. If it is stuck (writing to the dead connection), it and its nvim
+// are killed.
+var takeoverWait = 8 * time.Second // how long the old serve gets to close
+
+func takeOverGUI(s *Session) {
+	nvim := editorPid(s, uiGUI)
+	if nvim == 0 {
+		return
+	}
+	old := readPid(s.Path("serve-gui.pid"))
+	if old != 0 {
+		_ = syscall.Kill(old, syscall.SIGTERM)
+	}
+	for end := time.Now().Add(takeoverWait); time.Now().Before(end) && editorPid(s, uiGUI) != 0; {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if editorPid(s, uiGUI) != 0 {
+		_ = syscall.Kill(nvim, syscall.SIGKILL)
+		if old != 0 {
+			_ = syscall.Kill(old, syscall.SIGKILL)
+		}
+		for i := 0; i < 20 && editorPid(s, uiGUI) != 0; i++ {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	unmarkEditor(s, uiGUI)
 }
 
 // openElsewhereError is the error serve returns for a session that another
@@ -136,6 +178,9 @@ func (c *serveConn) runSession(s *Session, handoff string, gone <-chan error, si
 		return nil, err
 	}
 	markEditor(s, cmd.Process.Pid, uiGUI)
+	// For takeOverGUI, when a later serve finds this one cut off.
+	_ = writePid(s.Path("serve-gui.pid"), os.Getpid())
+	defer os.Remove(s.Path("serve-gui.pid"))
 	c.mu.Lock()
 	c.s, c.nvimIn = s, in
 	c.mu.Unlock()
@@ -340,9 +385,12 @@ func (c *serveConn) relayAgent(conn net.Conn) {
 }
 
 func cmdServe(args []string) error {
-	return withSession(args, 1, func(s *Session, _ []string) error {
+	fl := flag.NewFlagSet("serve", flag.ExitOnError)
+	takeover := fl.Bool("takeover", false, "close a GUI editor already open on the session first")
+	fl.Parse(args)
+	return withSession(fl.Args(), 1, func(s *Session, _ []string) error {
 		// Anything nvim or agentmux prints goes to stderr; stdout is the
 		// protocol.
-		return serve(s, os.Stdin, os.Stdout)
+		return serveSession(s, os.Stdin, os.Stdout, *takeover)
 	})
 }

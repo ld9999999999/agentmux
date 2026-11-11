@@ -4,7 +4,8 @@ package ghostty
 // terminal (it parses the agent's output), its render state (what to
 // draw), the key encoder (keys as the agent expects them), the formatter
 // (the selection as text) and selections. They follow the C headers in
-// include/ghostty/vt/ of the Ghostty checkout.
+// include/ghostty/vt/ of the Ghostty checkout; see ngam/DEVEL.md for the
+// pinned commit and how to build the library.
 //
 // The library is linked statically from ngam/lib. ghostty-lib.sh copies
 // it there from a Ghostty checkout and strips out Zig's compiler runtime
