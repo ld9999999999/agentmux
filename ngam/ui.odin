@@ -209,6 +209,53 @@ ui_mouse_button :: proc(b: u8) -> (mu.Mouse, bool) {
 	return .LEFT, false
 }
 
+// ui_track_click makes a press on a scrollbar's track, above or below its
+// thumb, jump the thumb there, centred on the press. microui then takes
+// the press as the start of a drag, so the thumb can be dragged on from
+// there. It reads the containers as the last frame laid them out, with
+// microui's own sums for the track and the thumb.
+ui_track_click :: proc(ctx: ^mu.Context, p: mu.Vec2) {
+	inside :: proc(r: mu.Rect, p: mu.Vec2) -> bool {
+		return p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h
+	}
+	// A menu or other overlay under the press takes it.
+	top: ^mu.Container
+	for &cnt, i in ctx.containers {
+		if ctx.container_pool[i].last_update != ctx.frame || !cnt.open || !inside(cnt.rect, p) {
+			continue
+		}
+		if top == nil || cnt.zindex > top.zindex {
+			top = &cnt
+		}
+	}
+	for &cnt, i in ctx.containers {
+		if ctx.container_pool[i].last_update != ctx.frame || !cnt.open {
+			continue
+		}
+		if top != nil && top != &cnt && top.zindex >= Z_OVERLAY {
+			return
+		}
+		body := cnt.body
+		total := cnt.content_size.y + ctx.style.padding * 2
+		maxscroll := total - body.h
+		if maxscroll <= 0 || body.h <= 0 {
+			continue
+		}
+		track := mu.Rect{body.x + body.w, body.y, ctx.style.scrollbar_size, body.h}
+		if !inside(track, p) {
+			continue
+		}
+		thumb_h := max(ctx.style.thumb_size, track.h * body.h / total)
+		thumb_y := track.y + cnt.scroll.y * (track.h - thumb_h) / maxscroll
+		if p.y >= thumb_y && p.y < thumb_y + thumb_h {
+			return // on the thumb: an ordinary drag
+		}
+		room := max(track.h - thumb_h, 1)
+		cnt.scroll.y = clamp((p.y - track.y - thumb_h / 2) * maxscroll / room, 0, maxscroll)
+		return
+	}
+}
+
 // ui_key maps an SDL key to microui's, for text boxes. On macOS Cmd acts
 // as microui's Ctrl, so Cmd-C, Cmd-V and Cmd-A work in text boxes.
 ui_key :: proc(k: sdl.Keycode) -> (mu.Key, bool) {

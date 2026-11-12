@@ -599,6 +599,9 @@ handle_event :: proc(app: ^App, ev: ^sdl.Event) {
 			// microui works out what is under the mouse while it builds a
 			// frame, so build one at the new position first.
 			ui_frame_now(app)
+			if b == .LEFT {
+				ui_track_click(ctx, mu.Vec2(app.mouse))
+			}
 			mu.input_mouse_down(ctx, app.mouse.x, app.mouse.y, b)
 		}
 		app.need_draw = true

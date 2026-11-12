@@ -43,7 +43,8 @@ Explorer :: struct {
 	expanded: map[string]bool,
 	rows:     [dynamic]Ex_Row, // the rows drawn last frame
 	selected: string, // the file highlighted: nvim's current buffer, or the last clicked
-	reveal:   string, // a file to scroll into view once its row is drawn
+	reveal:   string, // a file or folder to scroll into view once its row is drawn
+	reveal_open: bool, // reveal is a folder, to be opened too
 	error:    string,
 	watched:  string, // the folders last sent to nvim to watch, one per line
 	// A refresh empties the tree and reads the open folders again, one
@@ -340,7 +341,8 @@ walk :: proc(app: ^App, node: int, clicked: ^int) {
 		if list_row(&app.ui, n.path, indent, n.name, tag = mark, tag_color = mark_color, label_color = mark_color, selected = !n.dir && n.path == e.selected, icon = icon, arrow = n.dir ? (open ? "▾" : "▸") : "") {
 			clicked^ = row
 		}
-		if !n.dir && n.path == e.reveal {
+		// A folder waits for its files, so the scroll leaves room for them.
+		if n.path == e.reveal && n.dir == e.reveal_open && (!n.dir || n.loaded) {
 			scroll_into_view(app)
 		}
 		if n.dir && e.expanded[n.path] && n.loaded {
@@ -358,6 +360,18 @@ explorer_reveal :: proc(app: ^App, path: string) {
 	e.selected = strings.clone(path)
 	delete(e.reveal)
 	e.reveal = strings.clone(path)
+	e.reveal_open = false
+	expand_to(app, path)
+	app.need_draw = true
+}
+
+// explorer_open_folder opens the folder at path in the tree, with the
+// folders above it, and scrolls it into view.
+explorer_open_folder :: proc(app: ^App, path: string) {
+	e := &app.explorer
+	delete(e.reveal)
+	e.reveal = strings.clone(path)
+	e.reveal_open = true
 	expand_to(app, path)
 	app.need_draw = true
 }
@@ -399,9 +413,14 @@ expand_to :: proc(app: ^App, path: string) {
 			break // missing from the tree for now; the folder's watcher will add it
 		}
 		node = next
-		if i < len(parts) - 1 && e.nodes[node].dir && !e.expanded[e.nodes[node].path] {
+		last := i == len(parts) - 1
+		if (!last || e.reveal_open) && e.nodes[node].dir && !e.expanded[e.nodes[node].path] {
 			e.expanded[strings.clone(e.nodes[node].path)] = true
 			changed = true
+		}
+		if last && e.reveal_open && e.nodes[node].dir && !e.nodes[node].loaded && !e.nodes[node].loading {
+			e.nodes[node].loading = true
+			scan(app, e.nodes[node].path, node)
 		}
 	}
 	if changed {

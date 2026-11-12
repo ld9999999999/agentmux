@@ -399,6 +399,13 @@ git_click :: proc(app: ^App, row: int, mods: sdl.Keymod) {
 	delete(g.selected)
 	g.selected = strings.clone(row_key(en))
 	switch {
+	case strings.has_suffix(en.path, "/"):
+		// A whole untracked folder. nvim would open it with a folder
+		// plugin, which may change nvim's current folder, so it is shown
+		// in the Explorer instead.
+		// The view change reads the tree again, which finishes the job.
+		explorer_open_folder(app, strings.trim_right(path, "/"))
+		panel_set(app, true, 0)
 	case en.group == .Untracked || en.letter == "U":
 		// An untracked file has nothing to compare with; a conflict is
 		// edited by hand.
