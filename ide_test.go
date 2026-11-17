@@ -297,13 +297,37 @@ func TestIDEServerPi(t *testing.T) {
 		}
 	}
 
-	// The server drops at_mentioned for pi, so the next message is the new
-	// selection.
+	// nothingFirst checks that no notification comes before a ping's reply.
+	nothingFirst := func(why string, id int) {
+		time.Sleep(50 * time.Millisecond)
+		b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": "ping"})
+		if err := c.Write(ctx, websocket.MessageText, b); err != nil {
+			t.Fatal(err)
+		}
+		if m := readJSON(t, ctx, c); m["method"] != nil {
+			t.Fatalf("%s: got %v before the ping's reply", why, m)
+		}
+	}
+
+	// The server drops at_mentioned for pi. A new selection waits until the
+	// user types in pi's terminal; focus and mouse reports do not count.
 	sendEditor(editorMsg{Type: "at_mentioned", Params: json.RawMessage(`{"filePath":"/work/a.go"}`)})
 	sendEditor(editorMsg{Type: "selection", Params: json.RawMessage(`{"filePath":"/work/b.go","text":""}`)})
-	if m := readJSON(t, ctx, c); m["method"] != "selection_changed" {
-		t.Fatalf("expected only the selection, got %v", m)
+	nothingFirst("a selection before typing", 10)
+	ide.userTyped([]byte("\x1b[I\x1b[<64;10;5M\x1b[O"))
+	nothingFirst("a selection after focus and mouse reports", 11)
+	ide.userTyped([]byte("h"))
+	if m := readJSON(t, ctx, c); m["method"] != "selection_changed" ||
+		m["params"].(map[string]any)["filePath"] != "/work/b.go" {
+		t.Fatalf("expected the held selection after typing, got %v", m)
 	}
+	// The agent has it now: more typing, or the same selection again,
+	// sends nothing.
+	ide.userTyped([]byte("i"))
+	sendEditor(editorMsg{Type: "selection", Params: json.RawMessage(`{"filePath":"/work/b.go","text":""}`)})
+	time.Sleep(50 * time.Millisecond)
+	ide.userTyped([]byte("!"))
+	nothingFirst("a repeated selection", 12)
 
 	// If nvim quits during a diff, the wait ends with a JSON-RPC error (so
 	// pi-ide lets the edit through). Asking with no nvim linked gives the

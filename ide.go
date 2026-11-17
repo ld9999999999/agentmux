@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -33,6 +34,7 @@ type ideServer struct {
 	mu        sync.Mutex
 	clients   map[*websocket.Conn]bool
 	selection json.RawMessage // params of the last selection_changed
+	sent      json.RawMessage // the selection the agent has, so a repeat is not sent
 	// The links of the session's editors (one for terminals, one for a
 	// GUI), with the one the user last used at the end. Calls go to that
 	// one.
@@ -90,6 +92,10 @@ type ideDialect struct {
 	// zeroColumnEnd: the client reads a selection ending at column 0 of a
 	// line as ending at the line before, as VS Code reports whole lines.
 	zeroColumnEnd bool
+	// holdSelection: the editor's selection and cursor reach the agent
+	// only when the user types in the agent's terminal. The agent redraws
+	// on each one, which gets in its way while it works.
+	holdSelection bool
 }
 
 var ideDialects = map[string]ideDialect{
@@ -108,10 +114,11 @@ var ideDialects = map[string]ideDialect{
 	// when exactly one lock file matches its directory, so each session
 	// gets its own lock directory.
 	"pi": {
-		name:       "pi",
-		authHeader: "X-Pi-Ide-Authorization",
-		lockDir:    func(s *Session) string { return s.Path("pi-ide") },
-		env:        func(ide *ideServer) []string { return []string{"PI_IDE_LOCK_DIR=" + ide.d.lockDir(ide.s)} },
+		name:          "pi",
+		authHeader:    "X-Pi-Ide-Authorization",
+		lockDir:       func(s *Session) string { return s.Path("pi-ide") },
+		env:           func(ide *ideServer) []string { return []string{"PI_IDE_LOCK_DIR=" + ide.d.lockDir(ide.s)} },
+		holdSelection: true,
 	},
 }
 
@@ -279,10 +286,61 @@ func (ide *ideServer) handle(ctx context.Context, c *websocket.Conn, m rpcMsg) {
 func (ide *ideServer) replaySelection(c *websocket.Conn) {
 	ide.mu.Lock()
 	sel := ide.selection
+	ide.sent = sel
 	ide.mu.Unlock()
 	if sel != nil {
 		ide.notify(c, "selection_changed", ide.forClient(sel))
 	}
+}
+
+// sendSelection sends the editor's selection to the agent, unless the
+// agent has it already.
+func (ide *ideServer) sendSelection() {
+	ide.mu.Lock()
+	sel := ide.selection
+	same := sel == nil || bytes.Equal(sel, ide.sent)
+	if !same {
+		ide.sent = sel
+	}
+	ide.mu.Unlock()
+	if !same {
+		ide.broadcast("selection_changed", ide.forClient(sel))
+	}
+}
+
+// userTyped is called with input for the agent's terminal. Typing sends
+// a held selection, so the agent has it before the user's prompt.
+func (ide *ideServer) userTyped(b []byte) {
+	if ide.d.holdSelection && isTyping(b) {
+		// Not in the way of the keys: a stuck agent link would hold them.
+		go ide.sendSelection()
+	}
+}
+
+// isTyping says whether terminal input holds more than focus and mouse
+// reports, which a terminal sends without the user typing.
+func isTyping(b []byte) bool {
+	for len(b) > 0 {
+		switch {
+		case bytes.HasPrefix(b, []byte("\x1b[I")), bytes.HasPrefix(b, []byte("\x1b[O")):
+			b = b[3:] // focus in, focus out
+		case bytes.HasPrefix(b, []byte("\x1b[<")):
+			// An SGR mouse report: ESC [ < digits;digits;digits M or m.
+			i := 3
+			for i < len(b) && (b[i] >= '0' && b[i] <= '9' || b[i] == ';') {
+				i++
+			}
+			if i == len(b) || (b[i] != 'M' && b[i] != 'm') {
+				return true
+			}
+			b = b[i+1:]
+		case bytes.HasPrefix(b, []byte("\x1b[M")) && len(b) >= 6:
+			b = b[6:] // an X10 mouse report: three bytes follow
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 // forClient fixes selection params from nvim for clients that would count
@@ -620,7 +678,9 @@ func (ide *ideServer) serveEditor(conn net.Conn) {
 			ide.mu.Lock()
 			ide.selection = m.Params
 			ide.mu.Unlock()
-			ide.broadcast("selection_changed", ide.forClient(m.Params))
+			if !ide.d.holdSelection {
+				ide.sendSelection()
+			}
 		case "at_mentioned":
 			if ide.d.mentions {
 				ide.broadcast("at_mentioned", m.Params)

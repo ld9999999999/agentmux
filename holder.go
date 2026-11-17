@@ -282,6 +282,9 @@ func (h *holder) serve(conn net.Conn) {
 			if other {
 				h.resize(myRows, myCols, false)
 			}
+			if h.ide != nil {
+				h.ide.userTyped(payload)
+			}
 			if _, err := h.ptmx.Write(payload); err != nil {
 				return
 			}

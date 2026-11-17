@@ -25,6 +25,8 @@ For a graphical client, see [ngam](ngam/README.md).
   edits, so nvim itself is stateless. Cleanup is done when deleting a session.
 - **The agent can see your editor.** Claude Code and pi (with pi-ide) get the
   open file, your selection and nvim's diagnostics with each message.
+  pi gets the file and selection only once you type in its terminal, so
+  moving around in nvim does not disturb it while it works.
 - **Review edits in nvim.** When the agent asks before an edit, the change
   will open as a diff. Edit it if you like, then `:w` to accept or `:q` to
   reject.
